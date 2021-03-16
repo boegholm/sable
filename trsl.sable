@@ -1,0 +1,124 @@
+Package slangc ;
+
+Helpers
+	lf  				= 0x000a;
+	cr  				= 0x000d;
+	sp  				= ' ';
+    tab       			= 9;
+    line_terminator 	= lf | cr | cr lf;
+    digit     			= [ '0' .. '9' ];
+    nondigit  			= [ [ 'a' .. 'z' ] + [ 'A' .. 'Z' ] ]  ;
+    all       			= [0..0xffff];
+    input_character 	= [all - [cr + lf]];
+    not_star 			= [input_character - '*'] | line_terminator;
+    not_star_not_slash 	= [input_character - ['*' + '/']] | line_terminator;   
+ 
+Tokens
+    semi      = ';';
+    lpar      = '(';
+    rpar      = ')';
+    lbrace    = '{';
+    rbrace    = '}';
+    dots      = '..';
+    comma     = ',';
+    using     = 'using';
+    alloc     = '^';
+    garbage   = '!';
+    blank     = sp | tab;
+    eol       = cr | lf | cr lf;
+    select    = 'select';
+    repeat    = 'repeat';
+    lsq       = '[';
+    colon     = ':';
+    rsq       = ']';
+    qmark     = '?';
+    skip      = 'skip';
+    deadline  = 'deadline';
+    locks     = 'locks';
+    period    = 'period';
+    name      = 'name';
+    number    = digit+; 
+    identifier  = nondigit ( digit | nondigit ) * ;
+    end_of_line_comment = '//' input_character* line_terminator?;
+    comment = '/*' not_star+ '*'+ (not_star_not_slash not_star* '*'+)* '/';
+
+       
+Ignored Tokens  
+	 end_of_line_comment 
+   , blank 
+   , eol
+   , comment
+   ;
+    
+Productions
+    spec                         = {spec} namedef perioddef deadlinedef lockdef? trace       {-> New spec(namedef.identifier, deadlinedef.number, perioddef.number, [lockdef.identifier], trace)}                            
+                                 | {impl} namedef trace                                      {-> New spec(namedef.identifier, Null, Null, [], trace)}
+                                 ;
+                                 
+    namedef {-> identifier}      =            [nametoken]:name colon [name]:identifier semi? {->name}
+    							 ;
+
+    lockdef {-> identifier*}     =            locks colon identifiers semi?                  {-> [identifiers.identifier]}
+                                 ;
+
+    deadlinedef {->number}       =            deadline colon number semi?                    {-> number}
+                                 ;
+
+    perioddef {->number}         =            period colon number semi?                      {-> number}
+                                 ;
+
+    trace     {-> trace}         =            lsq blocks rsq                                 {-> New trace([blocks.block])}
+                                 ;
+
+    blocks    {-> block*}        = {multi}    opt_block semi blocks                          {-> [opt_block.block, blocks.block]}
+                                 | {single}   opt_block semi?                                {-> [opt_block.block]}
+                                 ; 
+
+    blockset  {-> block*}        = {multi}    block comma blockset                           {-> [block, blockset.block]}
+                                 | {single}   block comma?                                   {-> [block]}
+                                 ; 
+    
+    identifiers {->identifier*}  = {multi}    identifier comma identifiers                   {-> [identifier, identifiers.identifier]}
+                                 | {single}   identifier comma?                              {-> [identifier] }
+                                 ;
+
+    opt_block {->block}          = {optional} block qmark                                    {-> New block.optional(block) } 
+                                 | {regular}  block                                          {-> block.block }
+                                 ;
+
+    block     {->block}          = {trace}    trace                                          {-> New block.subtrace(trace)} 
+                                 | {time}     [time]:amount                                  {-> New block.time(time)}
+                                 | {space}    [time]:amount alloc [space]:amount             {-> New block.space(time, space)}
+                                 | {garbage}  [time]:amount garbage [space]:amount           {-> New block.garbage(time, space)}
+                                 | {usage}    using lpar identifiers rpar block              {-> New block.usage([identifiers.identifier],block)}
+                                 | {select}   select lbrace blockset rbrace                  {-> New block.select([blockset.block])} 
+                                 | {skip}     skip                                           {-> New block.skip()}
+                                 | {repeat}   repeat lpar amount rpar block                  {-> New block.repeat(amount.amount, block)}
+                                 ;
+    
+    amount    {->amount }        = {exact}    number                                         {-> New amount.exact(number)} 
+                                 | {interval} [start]:number dots [end]:number               {-> New amount.interval(start, end)}
+                                 ;
+
+Abstract Syntax Tree
+    spec  = [name]:identifier [deadline]:number? [period]:number? [locks]:identifier* [trace]:trace
+          ;
+
+    trace =            block* 
+          ;
+        
+    block = {skip}
+          | {time}     amount
+          | {space}    [time]:amount [space]:amount
+          | {garbage}  [time]:amount [garbage]:amount
+          | {subtrace} trace
+          | {usage}    identifier* block
+          | {repeat}   [iterations]:amount block
+          | {select}   block*
+          | {optional} block
+          ;
+
+    amount= {exact}    [value]:number
+          | {interval} [start]:number [end]:number
+          ;
+    
